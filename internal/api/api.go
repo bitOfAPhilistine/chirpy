@@ -176,6 +176,33 @@ func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
 	rw.Write(out)
 }
 
+func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
+	id, err := uuid.Parse(req.PathValue("id"))
+	if err != nil{
+		rw.WriteHeader(404)
+		rw.Write([]byte("Error: Post not found"))
+		return
+	}
+	fmt.Println("Getting chirp:", id)
+
+	chirp, err := api.dbQueries.GetChirp(req.Context(), id)
+	if err != nil{
+		rw.WriteHeader(404)
+		rw.Write([]byte("Error: Post not found"))
+		return
+	}
+
+	out, err := json.Marshal(Chirp(chirp))
+	if err != nil{
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		return
+	}
+
+	rw.WriteHeader(200)
+	rw.Write(out)
+}
+
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`

@@ -10,8 +10,8 @@ VALUES (
 RETURNING *;
 
 -- name: GetChirp :one
-SELECT * FTOM chirps
-WHERE id IS $1;
+SELECT * FROM chirps
+WHERE id = $1;
 
 -- name: GetChirps :many
 SELECT * FROM chirps
