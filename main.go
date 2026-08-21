@@ -1,62 +1,38 @@
 package main
 
+import _ "github.com/lib/pq"
 import (
+	"os"
 	"fmt"
 	"net/http"
-	"sync/atomic"
+	"database/sql"
+	"github.com/joho/godotenv"
+	"github.com/bitOfAPhilistine/chirpy/internal/api"
+	"github.com/bitOfAPhilistine/chirpy/internal/database"
 )
 
 
-type ApiConfig struct {
-	fileServerHits atomic.Int32
-}
-
-func newApiConfig() *ApiConfig {
-	newApiConfig := ApiConfig{
-		fileServerHits: atomic.Int32{},
-	}
-	return &newApiConfig
-}
-
-func (api *ApiConfig) Reset(rw http.ResponseWriter, req *http.Request) {
-	fmt.Println("Reset called")
-	api.fileServerHits = atomic.Int32{}
-	rw.WriteHeader(200)
-}
-
-func (api *ApiConfig) MetricsInc(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("Metrics Increment called")
-		api.fileServerHits.Add(1)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (api *ApiConfig) GetMetrics(rw http.ResponseWriter, req *http.Request) {
-	fmt.Println("Get Metrics called")
-	req.Header.Add("content-type", "text/plain; charset=utf-8")
-	rw.WriteHeader(200)
-	rw.Write([]byte(fmt.Sprintf("Hits: %d", api.fileServerHits.Load())))
-}
-
-
-func healthzHandler(rw http.ResponseWriter, req *http.Request) {
-	fmt.Println("Health Check called")
-	req.Header.Add("content-type", "text/plain; charset=utf-8")
-	rw.WriteHeader(200)
-	rw.Write([]byte("OK"))
-}
-
-
 func main() {
-	apiCfg := newApiConfig()
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Println("Error loading database: ", err)
+		os.Exit(1)
+	}
+
+	dbQueries := database.New(db)
+
+	apiCfg := api.NewConfig(dbQueries)
 
 	mux := http.NewServeMux()
 
 	mux.Handle("/app/", apiCfg.MetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
-	mux.HandleFunc("GET /healthz", healthzHandler)
-	mux.HandleFunc("GET /metrics", apiCfg.GetMetrics)
-	mux.HandleFunc("POST /reset", apiCfg.Reset)
+	mux.HandleFunc("GET /api/healthz", api.HealthzHandler)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.GetMetrics)
+	mux.HandleFunc("POST /admin/reset", apiCfg.Reset)
+	mux.HandleFunc("POST /api/validate_chirp", api.ValidateChirp)
 
 	server := http.Server{
 		Addr: ":8080",
