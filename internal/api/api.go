@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/bitOfAPhilistine/chirpy/internal/auth"
 	"github.com/bitOfAPhilistine/chirpy/internal/database"
 )
 
@@ -210,21 +211,46 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Login struct {
+	Email string `json:"email"`
+	Password string `json:"password"`
+}
+
+func dbUserToUser(dbUser database.User) User {
+	return User{
+		ID: dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email: dbUser.Email,
+	}
+}
+
 func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Creating user")
 	rw.Header().Set("Content-Type", "application/json")
 
-	res := struct {Email string `json:"email"`}{}
+	res := Login{}
 	if decodeRequestToJson(rw, req, &res) != nil {return}
+	fmt.Println(res.Email)
 
-	user, err := api.dbQueries.CreateUser(req.Context(), res.Email)
+	hashedPassword, err := auth.HashPassword(res.Password)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		return
+	}
+
+	user, err := api.dbQueries.CreateUser(req.Context(), database.CreateUserParams{
+		Email: res.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
 		return
 	}
 	
-	out, err := json.Marshal(User(user))
+	out, err := json.Marshal(dbUserToUser(user))
 	if err != nil{
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
@@ -232,5 +258,42 @@ func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.WriteHeader(201)
+	rw.Write(out)
+}
+
+func (api *ApiConfig) Login(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Logging in user")
+	rw.Header().Set("Content-Type", "application/json")
+
+	res := Login{}
+	if decodeRequestToJson(rw, req, &res) != nil {return}
+	fmt.Println(res.Email)
+
+	user, err := api.dbQueries.GetUserByEmail(req.Context(), res.Email)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		return
+	}
+
+	passCheck, err := auth.CheckPasswordHash(res.Password, user.HashedPassword)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		return
+	} else if !passCheck {
+		rw.WriteHeader(401)
+		rw.Write([]byte("Incorrect email or password"))
+		return
+	}
+	
+	out, err := json.Marshal(dbUserToUser(user))
+	if err != nil{
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		return
+	}
+
+	rw.WriteHeader(200)
 	rw.Write(out)
 }
