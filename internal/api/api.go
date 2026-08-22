@@ -17,13 +17,15 @@ type ApiConfig struct {
 	fileServerHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	secretKey string
 }
 
-func NewConfig(queries *database.Queries, platform string) *ApiConfig {
+func NewConfig(queries *database.Queries, platform string, secretKey string) *ApiConfig {
 	newConfig := ApiConfig{
 		fileServerHits: atomic.Int32{},
 		dbQueries: queries,
 		platform: platform,
+		secretKey: secretKey,
 	}
 	return &newConfig
 }
@@ -97,18 +99,33 @@ type Chirp struct {
 	CreatedAt time.Time		`json:"created_at"`
 	UpdatedAt time.Time		`json:"updated_at"`
 	Body      string		`json:"body"`
-	UserID    uuid.NullUUID `json:"user_id"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 func (api *ApiConfig) CreateChirp(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Creating chirp:\n", req.Body)
-	rw.Header().Set("Content-Type", "application/json")
+	rw.Header().Add("Content-Type", "application/json")
 
 	res := struct {
 		Body string `json:"body"`
-		UserId uuid.NullUUID `json:"user_id"`
 	}{}
 	if decodeRequestToJson(rw, req, &res) != nil {return}
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	userId, err := auth.ValidateJWT(token, api.secretKey)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
 
 	fmt.Println(res.Body)
 	length := len(res.Body)
@@ -131,11 +148,12 @@ func (api *ApiConfig) CreateChirp(rw http.ResponseWriter, req *http.Request) {
 
 	chirp, err := api.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
 		Body: res.Body,
-		UserID: res.UserId,
+		UserID: userId,
 	})
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -143,6 +161,7 @@ func (api *ApiConfig) CreateChirp(rw http.ResponseWriter, req *http.Request) {
 	if err != nil{
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -152,12 +171,13 @@ func (api *ApiConfig) CreateChirp(rw http.ResponseWriter, req *http.Request) {
 
 func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Getting all chirps")
-	rw.Header().Set("Content-Type", "application/json")
+	rw.Header().Add("Content-Type", "application/json")
 
 	chirps, err := api.dbQueries.GetChirps(req.Context())
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -170,6 +190,7 @@ func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
 	if err != nil{
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -179,24 +200,27 @@ func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
 
 func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
 	id, err := uuid.Parse(req.PathValue("id"))
-	if err != nil{
+	if err != nil {
 		rw.WriteHeader(404)
 		rw.Write([]byte("Error: Post not found"))
+		fmt.Println(err)
 		return
 	}
 	fmt.Println("Getting chirp:", id)
 
 	chirp, err := api.dbQueries.GetChirp(req.Context(), id)
-	if err != nil{
+	if err != nil {
 		rw.WriteHeader(404)
 		rw.Write([]byte("Error: Post not found"))
+		fmt.Println(err)
 		return
 	}
 
 	out, err := json.Marshal(Chirp(chirp))
-	if err != nil{
+	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -205,10 +229,11 @@ func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID        		uuid.UUID `json:"id"`
+	CreatedAt 		time.Time `json:"created_at"`
+	UpdatedAt 		time.Time `json:"updated_at"`
+	Email     		string    `json:"email"`
+	HashedPassword 	string	`json:"-"`
 }
 
 type Login struct {
@@ -216,18 +241,9 @@ type Login struct {
 	Password string `json:"password"`
 }
 
-func dbUserToUser(dbUser database.User) User {
-	return User{
-		ID: dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email: dbUser.Email,
-	}
-}
-
 func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Creating user")
-	rw.Header().Set("Content-Type", "application/json")
+	rw.Header().Add("Content-Type", "application/json")
 
 	res := Login{}
 	if decodeRequestToJson(rw, req, &res) != nil {return}
@@ -237,6 +253,7 @@ func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -247,13 +264,15 @@ func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
-	
-	out, err := json.Marshal(dbUserToUser(user))
+
+	out, err := json.Marshal(User(user))
 	if err != nil{
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -263,7 +282,7 @@ func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
 
 func (api *ApiConfig) Login(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Logging in user")
-	rw.Header().Set("Content-Type", "application/json")
+	rw.Header().Add("Content-Type", "application/json")
 
 	res := Login{}
 	if decodeRequestToJson(rw, req, &res) != nil {return}
@@ -273,6 +292,7 @@ func (api *ApiConfig) Login(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
@@ -280,20 +300,116 @@ func (api *ApiConfig) Login(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	} else if !passCheck {
 		rw.WriteHeader(401)
 		rw.Write([]byte("Incorrect email or password"))
 		return
 	}
-	
-	out, err := json.Marshal(dbUserToUser(user))
-	if err != nil{
+
+	token, err := auth.MakeJWT(user.ID, api.secretKey, time.Hour)
+	if err != nil {
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	refreshToken, err := api.dbQueries.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{
+		Token: auth.MakeRefreshToken(),
+		UserID: user.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 24 * 60),
+	})
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	type UserWithTokens struct {
+		User
+		Token string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	userWithTokens := UserWithTokens{
+		User: User(user),
+		Token: token,
+		RefreshToken: refreshToken,
+	}
+	
+	out, err := json.Marshal(userWithTokens)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
 		return
 	}
 
 	rw.WriteHeader(200)
 	rw.Write(out)
+}
+
+func (api *ApiConfig) Refresh(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Refreshing user access token")
+	rw.Header().Add("Content-Type", "application/json")
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rt, err := api.dbQueries.GetRefreshToken(req.Context(), token)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	} else if time.Now().Compare(rt.ExpiresAt) >= 0 {
+		rw.WriteHeader(401)
+		rw.Write([]byte("Refresh token expired"))
+		fmt.Println("Refresh token expired")
+		return
+	} else if rt.RevokedAt.Valid {
+		rw.WriteHeader(401)
+		rw.Write([]byte("Refresh token revoked"))
+		fmt.Println("Refresh token revoked")
+		return
+	}
+
+	newToken, err := auth.MakeJWT(rt.UserID, api.secretKey, time.Hour)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rw.WriteHeader(200)
+	rw.Write([]byte(fmt.Sprintf("{\"token\": \"%s\"}", newToken)))
+}
+
+func (api *ApiConfig) Revoke(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Revoking user access token")
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	if err = api.dbQueries.RevokeRefreshToken(req.Context(), token); err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rw.WriteHeader(204)
 }

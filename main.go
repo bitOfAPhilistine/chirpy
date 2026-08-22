@@ -24,7 +24,7 @@ func main() {
 
 	dbQueries := database.New(db)
 
-	apiCfg := api.NewConfig(dbQueries, os.Getenv("PLATFORM"))
+	apiCfg := api.NewConfig(dbQueries, os.Getenv("PLATFORM"), os.Getenv("SECRET_KEY"))
 
 	mux := http.NewServeMux()
 
@@ -32,6 +32,8 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", api.HealthzHandler)
 	mux.HandleFunc("POST /api/users", apiCfg.CreateUser)
 	mux.HandleFunc("POST /api/login", apiCfg.Login)
+	mux.HandleFunc("POST /api/refresh", apiCfg.Refresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.Revoke)
 	mux.HandleFunc("POST /api/chirps", apiCfg.CreateChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.GetChirps)
 	mux.HandleFunc("GET /api/chirps/{id}", apiCfg.GetChirp)
