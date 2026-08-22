@@ -199,6 +199,7 @@ func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Getting chirp")
 	id, err := uuid.Parse(req.PathValue("id"))
 	if err != nil {
 		rw.WriteHeader(404)
@@ -206,7 +207,6 @@ func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("Getting chirp:", id)
 
 	chirp, err := api.dbQueries.GetChirp(req.Context(), id)
 	if err != nil {
@@ -226,6 +226,56 @@ func (api *ApiConfig) GetChirp(rw http.ResponseWriter, req *http.Request) {
 
 	rw.WriteHeader(200)
 	rw.Write(out)
+}
+
+func (api *ApiConfig) DeleteChirp(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Deleting chirp")
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, api.secretKey)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	chirpID, err := uuid.Parse(req.PathValue("id"))
+	if err != nil {
+		rw.WriteHeader(404)
+		rw.Write([]byte("Error: Post not found"))
+		fmt.Println(err)
+		return
+	}
+
+	chirp, err := api.dbQueries.GetChirp(req.Context(), chirpID)
+	if err != nil {
+		rw.WriteHeader(404)
+		rw.Write([]byte("Error: Post not found"))
+		fmt.Println(err)
+		return
+	}
+
+	if chirp.UserID != userID {
+		rw.WriteHeader(403)
+		return
+	}
+
+	if err = api.dbQueries.DeleteChirp(req.Context(), chirpID); err != nil {
+		rw.WriteHeader(403)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rw.WriteHeader(204)
 }
 
 type User struct {
@@ -341,6 +391,62 @@ func (api *ApiConfig) Login(rw http.ResponseWriter, req *http.Request) {
 	
 	out, err := json.Marshal(userWithTokens)
 	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rw.WriteHeader(200)
+	rw.Write(out)
+}
+
+func (api *ApiConfig) ChangeLogin(rw http.ResponseWriter, req *http.Request) {
+	fmt.Println("Changing user login")
+	rw.Header().Add("Content-Type", "application/json")
+
+	res := Login{}
+	if decodeRequestToJson(rw, req, &res) != nil {return}
+	fmt.Println(res.Email)
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, api.secretKey)
+	if err != nil {
+		rw.WriteHeader(401)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(res.Password)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	user, err := api.dbQueries.ChangeLogin(req.Context(), database.ChangeLoginParams{
+		ID: userID,
+		Email: res.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	out, err := json.Marshal(User(user))
+	if err != nil{
 		rw.WriteHeader(500)
 		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
 		fmt.Println(err)
