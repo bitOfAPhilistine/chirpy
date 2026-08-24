@@ -60,3 +60,10 @@ func MakeRefreshToken() string {
 	rand.Read(token)
 	return hex.EncodeToString(token)
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	ts := headers.Get("Authorization")
+	if ts == "" {return "", fmt.Errorf("no api key string found in headers %v", headers)}
+
+	return strings.Split(ts, " ")[1], nil
+}

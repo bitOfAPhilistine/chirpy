@@ -18,14 +18,16 @@ type ApiConfig struct {
 	dbQueries *database.Queries
 	platform string
 	secretKey string
+	polkaKey string
 }
 
-func NewConfig(queries *database.Queries, platform string, secretKey string) *ApiConfig {
+func NewConfig(queries *database.Queries, platform string, secretKey string, polkaKey string) *ApiConfig {
 	newConfig := ApiConfig{
 		fileServerHits: atomic.Int32{},
 		dbQueries: queries,
 		platform: platform,
 		secretKey: secretKey,
+		polkaKey: polkaKey,
 	}
 	return &newConfig
 }
@@ -279,16 +281,17 @@ func (api *ApiConfig) DeleteChirp(rw http.ResponseWriter, req *http.Request) {
 }
 
 type User struct {
-	ID        		uuid.UUID `json:"id"`
-	CreatedAt 		time.Time `json:"created_at"`
-	UpdatedAt 		time.Time `json:"updated_at"`
-	Email     		string    `json:"email"`
-	HashedPassword 	string	`json:"-"`
+	ID        		uuid.UUID 	`json:"id"`
+	CreatedAt 		time.Time 	`json:"created_at"`
+	UpdatedAt 		time.Time 	`json:"updated_at"`
+	Email     		string    	`json:"email"`
+	HashedPassword 	string	  	`json:"-"`
+	IsChirpyRed    	bool		`json:"is_chirpy_red"`
 }
 
 type Login struct {
-	Email string `json:"email"`
-	Password string `json:"password"`
+	Email 		string 	`json:"email"`
+	Password 	string 	`json:"password"`
 }
 
 func (api *ApiConfig) CreateUser(rw http.ResponseWriter, req *http.Request) {
@@ -518,4 +521,46 @@ func (api *ApiConfig) Revoke(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.WriteHeader(204)
+}
+
+func (api *ApiConfig) UpgradeUser(rw http.ResponseWriter, req *http.Request) {
+	apiKey, err := auth.GetAPIKey(req.Header)
+	if err != nil || apiKey != api.polkaKey {
+		rw.WriteHeader(401)
+		fmt.Println("Invalid or no Polka API Key given")
+		return
+	}
+
+	res := struct {
+		Event string `json:"event"`
+		Data struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}{}
+	if decodeRequestToJson(rw, req, &res) != nil {return}
+
+	if res.Event != "user.upgraded" {
+		rw.WriteHeader(204)
+		fmt.Println(fmt.Sprintf("Unhandled polka webhook request: %s", res.Event))
+		return
+	}
+
+	userID, err := uuid.Parse(res.Data.UserID)
+	if err != nil {
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	user, err := api.dbQueries.UpgradeUser(req.Context(), userID)
+	if err != nil {
+		rw.WriteHeader(404)
+		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+		fmt.Println(err)
+		return
+	}
+
+	rw.WriteHeader(204)
+	fmt.Printf("User %s upgraded to Chirpy Red\n", user.Email)
 }

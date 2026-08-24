@@ -24,21 +24,27 @@ func main() {
 
 	dbQueries := database.New(db)
 
-	apiCfg := api.NewConfig(dbQueries, os.Getenv("PLATFORM"), os.Getenv("SECRET_KEY"))
+	apiCfg := api.NewConfig(dbQueries, os.Getenv("PLATFORM"), os.Getenv("SECRET_KEY"), os.Getenv("POLKA_KEY"))
 
 	mux := http.NewServeMux()
 
 	mux.Handle("/app/", apiCfg.MetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
+
 	mux.HandleFunc("GET /api/healthz", api.HealthzHandler)
+
 	mux.HandleFunc("POST /api/users", apiCfg.CreateUser)
 	mux.HandleFunc("PUT /api/users", apiCfg.ChangeLogin)
 	mux.HandleFunc("POST /api/login", apiCfg.Login)
 	mux.HandleFunc("POST /api/refresh", apiCfg.Refresh)
 	mux.HandleFunc("POST /api/revoke", apiCfg.Revoke)
+
 	mux.HandleFunc("POST /api/chirps", apiCfg.CreateChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.GetChirps)
 	mux.HandleFunc("GET /api/chirps/{id}", apiCfg.GetChirp)
 	mux.HandleFunc("DELETE /api/chirps/{id}", apiCfg.DeleteChirp)
+
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.UpgradeUser)
+
 	mux.HandleFunc("GET /admin/metrics", apiCfg.GetMetrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.Reset)
 
