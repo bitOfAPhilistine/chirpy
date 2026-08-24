@@ -57,12 +57,7 @@ func (api *ApiConfig) GetMetrics(rw http.ResponseWriter, req *http.Request) {
 	fmt.Println("Get Metrics called")
 	req.Header.Add("content-type", "text/html; charset=utf-8")
 	rw.WriteHeader(200)
-	rw.Write([]byte(fmt.Sprintf(`<html>
-  <body>
-    <h1>Welcome, Chirpy Admin</h1>
-    <p>Chirpy has been visited %d times!</p>
-  </body>
-</html>`, api.fileServerHits.Load())))
+	rw.Write([]byte(fmt.Sprintf(`<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>`, api.fileServerHits.Load())))
 }
 
 func (api *ApiConfig) MetricsInc(next http.Handler) http.Handler {
@@ -72,7 +67,6 @@ func (api *ApiConfig) MetricsInc(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
 
 func decodeRequestToJson(rw http.ResponseWriter, req *http.Request, res any) error {
 	if err := json.NewDecoder(req.Body).Decode(res); err != nil {
@@ -172,15 +166,39 @@ func (api *ApiConfig) CreateChirp(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (api *ApiConfig) GetChirps(rw http.ResponseWriter, req *http.Request) {
-	fmt.Println("Getting all chirps")
 	rw.Header().Add("Content-Type", "application/json")
 
-	chirps, err := api.dbQueries.GetChirps(req.Context())
-	if err != nil {
-		rw.WriteHeader(500)
-		rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
-		fmt.Println(err)
-		return
+	var chirps []database.Chirp
+	var err error
+	authorIDStr := req.URL.Query().Get("author_id")
+	if authorIDStr == "" {
+		fmt.Println("Getting all chirps")
+
+		chirps, err = api.dbQueries.GetChirps(req.Context())
+		if err != nil {
+			rw.WriteHeader(500)
+			rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+			fmt.Println(err)
+			return
+		}
+	} else {
+		fmt.Println("Getting all chirps from user ", authorIDStr)
+
+		authorID, err := uuid.Parse(authorIDStr)
+		if err != nil {
+			rw.WriteHeader(500)
+			rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+			fmt.Println(err)
+			return
+		}
+
+		chirps, err = api.dbQueries.GetChirpsByAuthor(req.Context(), authorID)
+		if err != nil {
+			rw.WriteHeader(404)
+			rw.Write([]byte(fmt.Sprintf("{\"Error\":\"%s\"}", err)))
+			fmt.Println(err)
+			return
+		}
 	}
 
 	outChirps := make([]Chirp, len(chirps))
